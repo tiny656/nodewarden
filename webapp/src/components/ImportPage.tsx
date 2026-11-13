@@ -663,12 +663,12 @@ export default function ImportPage({ onImport, onImportEncryptedRaw, accountKeys
   const exportNeedsFilePassword = exportNeedsMode && encryptedJsonMode === 'password';
   const exportIsZip = exportFormat === 'bitwarden_json_zip' || exportFormat === 'bitwarden_encrypted_json_zip';
 
-  async function runExportWithMasterPassword(masterPassword: string) {
+  async function runExportWithMasterPassword(masterPassword: string): Promise<boolean> {
     const filePassword = exportPassword.trim();
     const zipPass = zipPassword.trim();
     if (exportNeedsFilePassword && !filePassword) {
       onNotify('error', t('txt_import_file_password_required'));
-      return;
+      return false;
     }
 
     setIsExporting(true);
@@ -681,9 +681,11 @@ export default function ImportPage({ onImport, onImportEncryptedRaw, accountKeys
         masterPassword,
       });
       onNotify('success', t('txt_export_completed'));
+      return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : t('txt_export_failed');
       onNotify('error', message);
+      return false;
     } finally {
       setIsExporting(false);
     }
@@ -696,8 +698,8 @@ export default function ImportPage({ onImport, onImportEncryptedRaw, accountKeys
       onNotify('error', t('txt_master_password_is_required'));
       return;
     }
-    await runExportWithMasterPassword(masterPassword);
-    if (!isExporting) {
+    const succeeded = await runExportWithMasterPassword(masterPassword);
+    if (succeeded) {
       setExportAuthPassword('');
       setExportAuthDialogOpen(false);
     }

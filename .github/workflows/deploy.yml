@@ -53,6 +53,7 @@ jobs:
           npm run test:deploy-config
           npm run test:security-results
           npm run test:security-regressions
+          npm run test:backup-listing
           npm run test:web-security
           npm run test:web-crypto
           npm run test:config-compatibility

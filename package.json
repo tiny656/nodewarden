@@ -23,6 +23,7 @@
     "test:web-crypto": "tsx --test scripts/web-crypto-availability.test.ts",
     "test:web-security": "tsx --import ./scripts/offline-workers-loader.mjs --test scripts/web-security.test.ts",
     "test:security-regressions": "tsx --tsconfig webapp/tsconfig.json --import ./scripts/offline-workers-loader.mjs --test scripts/crypto-integrity.test.ts scripts/authentication-limits.test.ts scripts/idle-lock.test.ts",
+    "test:backup-listing": "tsx --import ./scripts/offline-workers-loader.mjs --test scripts/backup-listing.test.ts",
     "test:deploy-config": "node --test scripts/deploy-config.test.mjs",
     "test:security-results": "node --test scripts/security-results.test.mjs",
     "test:notifications-security": "tsx --test scripts/notifications-security.test.ts",
@@ -89,6 +90,7 @@
     "lucide-preact": "^1.49.0",
     "preact": "^10.29.3",
     "qrcode-generator": "^2.0.4",
+    "saxes": "6.0.0",
     "wouter": "^3.13.0"
   }
 }

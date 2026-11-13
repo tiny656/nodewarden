@@ -6,12 +6,16 @@ Thank you for helping keep NodeWarden safe.
 
 Please **do not report security vulnerabilities through public GitHub issues, discussions, pull requests, or chat groups**.
 
-Use GitHub Private Vulnerability Reporting instead:
+Use [GitHub Private Vulnerability Reporting for this fork](https://github.com/tiny656/nodewarden/security/advisories/new):
 
-1. Open the NodeWarden repository on GitHub.
+1. Open [tiny656/nodewarden](https://github.com/tiny656/nodewarden) on GitHub.
 2. Go to **Security and quality**.
 3. Click **Report a vulnerability**.
 4. Submit the report privately.
+
+For issues affecting the original project, use the
+[upstream private reporting page](https://github.com/shuaiplus/nodewarden/security/advisories/new).
+Include the affected fork commit when reporting changes specific to this deployment.
 
 NodeWarden is independent from Bitwarden. Please do not report NodeWarden-specific issues to the official Bitwarden team.
 
