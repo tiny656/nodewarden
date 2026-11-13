@@ -67,8 +67,14 @@ function uuidToDotNetGuidBytes(value: string): Uint8Array | null {
   ]);
 }
 
-function normalizeWebAuthnBase64(value: unknown): string {
-  return String(value || '').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+function normalizeWebAuthnBase64(value: unknown, maxLength: number): string | null {
+  if (typeof value !== 'string' || !value || value.length > maxLength) return null;
+  if (!/^[A-Za-z0-9+/_-]+={0,2}$/.test(value)) return null;
+  // Bounded input and a single backwards walk avoid quadratic suffix matching.
+  let end = value.length;
+  while (end > 0 && value[end - 1] === '=') end -= 1;
+  if (end % 4 === 1) return null;
+  return value.slice(0, end).replace(/\+/g, '-').replace(/\//g, '_');
 }
 
 async function importHmacKey(secret: string): Promise<CryptoKey> {
@@ -135,6 +141,7 @@ export async function verifyAccountPasskeyToken(
   scope: AccountPasskeyChallengeScope
 ): Promise<AccountPasskeyTokenPayload | null> {
   try {
+    if (typeof token !== 'string' || token.length > 8192) return null;
     const parts = String(token || '').split('.');
     if (parts.length !== 3) return null;
     const data = `${parts[0]}.${parts[1]}`;
@@ -234,20 +241,27 @@ export function normalizeRegistrationResponse(raw: unknown): RegistrationRespons
   const input = raw && typeof raw === 'object' ? raw as Record<string, any> : null;
   const response = input?.response && typeof input.response === 'object' ? input.response as Record<string, any> : null;
   if (!input || !response) return null;
-  const clientDataJSON = response.clientDataJSON || response.clientDataJson;
-  if (!input.id || !input.rawId || !clientDataJSON || !response.attestationObject) return null;
+  const id = normalizeWebAuthnBase64(input.id, 2048);
+  const rawId = normalizeWebAuthnBase64(input.rawId, 2048);
+  const clientDataJSON = normalizeWebAuthnBase64(response.clientDataJSON || response.clientDataJson, 16 * 1024);
+  const attestationObject = normalizeWebAuthnBase64(response.attestationObject, 64 * 1024);
+  const authenticatorData = response.authenticatorData == null ? undefined : normalizeWebAuthnBase64(response.authenticatorData, 16 * 1024);
+  const publicKey = response.publicKey == null ? undefined : normalizeWebAuthnBase64(response.publicKey, 16 * 1024);
+  if (!id || !rawId || id !== rawId || !clientDataJSON || !attestationObject || authenticatorData === null || publicKey === null) return null;
+  if (response.transports != null && (!Array.isArray(response.transports) || response.transports.length > 12 ||
+    response.transports.some((value: unknown) => typeof value !== 'string' || value.length > 32))) return null;
   return {
-    id: normalizeWebAuthnBase64(input.id),
-    rawId: normalizeWebAuthnBase64(input.rawId),
+    id,
+    rawId,
     type: 'public-key',
     authenticatorAttachment: input.authenticatorAttachment,
     clientExtensionResults: input.clientExtensionResults || input.extensions || {},
     response: {
-      attestationObject: normalizeWebAuthnBase64(response.attestationObject),
-      clientDataJSON: normalizeWebAuthnBase64(clientDataJSON),
-      authenticatorData: response.authenticatorData ? normalizeWebAuthnBase64(response.authenticatorData) : undefined,
+      attestationObject,
+      clientDataJSON,
+      authenticatorData,
       transports: Array.isArray(response.transports) ? response.transports.map(String) as AuthenticatorTransportFuture[] : undefined,
-      publicKey: response.publicKey ? normalizeWebAuthnBase64(response.publicKey) : undefined,
+      publicKey,
       publicKeyAlgorithm: typeof response.publicKeyAlgorithm === 'number' ? response.publicKeyAlgorithm : undefined,
     },
   };
@@ -257,19 +271,24 @@ export function normalizeAuthenticationResponse(raw: unknown): AuthenticationRes
   const input = raw && typeof raw === 'object' ? raw as Record<string, any> : null;
   const response = input?.response && typeof input.response === 'object' ? input.response as Record<string, any> : null;
   if (!input || !response) return null;
-  const clientDataJSON = response.clientDataJSON || response.clientDataJson;
-  if (!input.id || !input.rawId || !clientDataJSON || !response.authenticatorData || !response.signature) return null;
+  const id = normalizeWebAuthnBase64(input.id, 2048);
+  const rawId = normalizeWebAuthnBase64(input.rawId, 2048);
+  const clientDataJSON = normalizeWebAuthnBase64(response.clientDataJSON || response.clientDataJson, 16 * 1024);
+  const authenticatorData = normalizeWebAuthnBase64(response.authenticatorData, 16 * 1024);
+  const signature = normalizeWebAuthnBase64(response.signature, 8192);
+  const userHandle = response.userHandle == null || response.userHandle === '' ? undefined : normalizeWebAuthnBase64(response.userHandle, 128);
+  if (!id || !rawId || id !== rawId || !clientDataJSON || !authenticatorData || !signature || userHandle === null) return null;
   return {
-    id: normalizeWebAuthnBase64(input.id),
-    rawId: normalizeWebAuthnBase64(input.rawId),
+    id,
+    rawId,
     type: 'public-key',
     authenticatorAttachment: input.authenticatorAttachment,
     clientExtensionResults: input.clientExtensionResults || input.extensions || {},
     response: {
-      authenticatorData: normalizeWebAuthnBase64(response.authenticatorData),
-      clientDataJSON: normalizeWebAuthnBase64(clientDataJSON),
-      signature: normalizeWebAuthnBase64(response.signature),
-      userHandle: response.userHandle ? normalizeWebAuthnBase64(response.userHandle) : undefined,
+      authenticatorData,
+      clientDataJSON,
+      signature,
+      userHandle,
     },
   };
 }

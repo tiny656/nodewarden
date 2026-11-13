@@ -219,32 +219,33 @@ export async function encryptBw(data: Uint8Array, encKey: Uint8Array, macKey: Ui
   return `2.${bytesToBase64(iv)}|${bytesToBase64(cipher)}|${bytesToBase64(mac)}`;
 }
 
-function parseCipherString(s: string): { type: number; iv: Uint8Array; ct: Uint8Array; mac: Uint8Array | null } {
-  if (!s || typeof s !== 'string') throw new Error('invalid encrypted string');
-  const p = s.indexOf('.');
-  if (p <= 0) throw new Error('invalid encrypted string');
-  const type = Number(s.slice(0, p));
-  const body = s.slice(p + 1);
-  const parts = body.split('|');
-  if (type === 2 && parts.length === 3) {
-    return { type: 2, iv: base64ToBytes(parts[0]), ct: base64ToBytes(parts[1]), mac: base64ToBytes(parts[2]) };
+function parseCipherString(s: string): { iv: Uint8Array; ct: Uint8Array; mac: Uint8Array } {
+  // Current vault, key-wrapping, Send, and encrypted-export callers use type 2.
+  // A ciphertext-supplied type must never select unauthenticated decryption
+  // with the same keys.
+  if (typeof s !== 'string' || !s.startsWith('2.')) {
+    throw new Error('Authenticated encryption type 2 is required');
   }
-  if ((type === 0 || type === 1 || type === 4) && parts.length >= 2) {
-    return { type, iv: base64ToBytes(parts[0]), ct: base64ToBytes(parts[1]), mac: null };
+  const parts = s.slice(2).split('|');
+  if (parts.length !== 3 || parts.some((part) => !part)) throw new Error('Invalid encrypted string');
+  const [iv, ct, mac] = parts.map(base64ToBytes);
+  if (iv.length !== 16 || mac.length !== 32 || ct.length === 0 || ct.length % 16 !== 0) {
+    throw new Error('Invalid encrypted string');
   }
-  throw new Error('unsupported enc type');
+  return { iv, ct, mac };
 }
 
-export async function decryptBw(cipherString: string, encKey: Uint8Array, macKey?: Uint8Array): Promise<Uint8Array> {
-  const parsed = parseCipherString(cipherString);
-  if (parsed.type === 2 && macKey && parsed.mac) {
-    const expected = await hmacSha256(macKey, concatBytes(parsed.iv, parsed.ct));
-    if (!constantTimeEqual(expected, parsed.mac)) throw new Error('MAC mismatch');
+export async function decryptBw(cipherString: string, encKey: Uint8Array, macKey: Uint8Array): Promise<Uint8Array> {
+  if (encKey?.length !== 32 || macKey?.length !== 32) {
+    throw new Error('Encryption and authentication keys must both be 32 bytes');
   }
+  const parsed = parseCipherString(cipherString);
+  const expected = await hmacSha256(macKey, concatBytes(parsed.iv, parsed.ct));
+  if (!constantTimeEqual(expected, parsed.mac)) throw new Error('MAC mismatch');
   return decryptAesCbc(parsed.ct, encKey, parsed.iv);
 }
 
-export async function decryptStr(cipherString: string | null | undefined, encKey: Uint8Array, macKey?: Uint8Array): Promise<string> {
+export async function decryptStr(cipherString: string | null | undefined, encKey: Uint8Array, macKey: Uint8Array): Promise<string> {
   if (!cipherString || typeof cipherString !== 'string') return '';
   const plain = await decryptBw(cipherString, encKey, macKey);
   return new TextDecoder().decode(plain);

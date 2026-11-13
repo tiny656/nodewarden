@@ -346,6 +346,10 @@ export async function handleToken(request: Request, env: Env): Promise<Response>
     return identityErrorResponse('Invalid request payload', 'invalid_request', 400);
   }
 
+  if (!body || typeof body !== 'object' || Array.isArray(body) || typeof body.grant_type !== 'string') {
+    return identityErrorResponse('Invalid request payload', 'invalid_request', 400);
+  }
+
   const grantType = body.grant_type;
   const clientIdentifier = getClientIdentifier(request);
   if (!clientIdentifier && grantType !== 'refresh_token') {
@@ -362,6 +366,17 @@ export async function handleToken(request: Request, env: Env): Promise<Response>
       503,
       { 'Retry-After': '5' }
     );
+  }
+
+  if (clientIdentifier && ['password', 'webauthn', 'client_credentials'].includes(grantType)) {
+    const budget = await rateLimit.consumeStrictBudget(
+      `${clientIdentifier}:authentication`, LIMITS.rateLimit.authenticationRequestsPerMinute
+    );
+    if (!budget.allowed) {
+      return identityErrorResponse('Too many authentication requests. Try again later.', 'TooManyRequests', 429, {
+        'Retry-After': String(budget.retryAfterSeconds || 60),
+      });
+    }
   }
 
   if (grantType === 'password') {

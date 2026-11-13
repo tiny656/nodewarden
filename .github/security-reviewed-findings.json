@@ -1,0 +1,72 @@
+[
+  {
+    "tool": "CodeQL",
+    "rule": "js/clear-text-storage-of-sensitive-data",
+    "path": "webapp/src/lib/api/auth.ts",
+    "expires": "2027-02-13",
+    "reason": "saveSession persists only email/authMode; profileSnapshotForStorage explicitly whitelists display metadata and omits hints, tokens and key material. The persistence regression test verifies these boundaries."
+  },
+  {
+    "tool": "CodeQL",
+    "rule": "js/clear-text-storage-of-sensitive-data",
+    "path": "webapp/src/lib/offline-auth.ts",
+    "expires": "2027-02-13",
+    "reason": "Offline unlock persists a type-2 encrypted wrapped vault key and KDF parameters, not the master password or decrypted key. Profile metadata is whitelisted and tested; local encrypted data remains exposed to offline password guessing by design."
+  },
+  {
+    "tool": "CodeQL",
+    "rule": "js/missing-origin-check",
+    "path": "webapp/src/workers/vault-decrypt.worker.ts",
+    "expires": "2027-02-13",
+    "reason": "This handler belongs to a dedicated Worker created with new Worker, not a Window message listener. Only its owning context can post through its Worker reference; a cross-origin window cannot address this handler."
+  },
+  {
+    "tool": "Semgrep OSS",
+    "rule": "javascript.node-crypto.security.create-de-cipher-no-iv.create-de-cipher-no-iv",
+    "path": "webapp/src/hooks/useVaultSendActions.ts",
+    "expires": "2027-02-13",
+    "reason": "createCipher is imported from the local api/vault module and creates a vault API record. It is not node:crypto.createCipher. Web Crypto encryptBw uses random IVs and mandatory HMAC verification."
+  },
+  {
+    "tool": "Semgrep OSS",
+    "rule": "javascript.lang.security.audit.prototype-pollution.prototype-pollution-loop.prototype-pollution-loop",
+    "path": "src/handlers/accounts.ts",
+    "expires": "2027-02-13",
+    "reason": "readNestedString/readNestedNumber only read property paths supplied by fixed internal arrays. Neither helper assigns to the input object or to an object prototype."
+  },
+  {
+    "tool": "Semgrep OSS",
+    "rule": "javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp",
+    "path": "src/router-devices.ts",
+    "expires": "2027-02-13",
+    "reason": "devicesPath is called exclusively with hardcoded route suffixes in this module. Request paths are matched against the resulting regex and are never interpolated into its pattern."
+  },
+  {
+    "tool": "Semgrep OSS",
+    "rule": "javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp",
+    "path": "src/services/backup-uploader.ts",
+    "expires": "2027-02-13",
+    "reason": "The XML tagName arguments are hardcoded response/href/Contents/Key and other fixed S3/WebDAV field names. Remote XML is input text, never the interpolated regular-expression pattern."
+  },
+  {
+    "tool": "Semgrep OSS",
+    "rule": "javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp",
+    "path": "src/services/backup-import.ts",
+    "expires": "2027-02-13",
+    "reason": "Shadow-table regexes interpolate only BackupTableName members from the internal BACKUP_TABLES whitelist, not table names supplied by a backup or HTTP request."
+  },
+  {
+    "tool": "Semgrep OSS",
+    "rule": "javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp",
+    "path": "scripts/security-audit-backup-auth-state.mjs",
+    "expires": "2027-02-13",
+    "reason": "This local source-audit script uses fixed table names to inspect repository SQL. It is not part of the deployed Worker and does not accept unauthenticated remote input."
+  },
+  {
+    "tool": "Semgrep OSS",
+    "rule": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+    "path": "scripts/i18n-utils.cjs",
+    "expires": "2027-02-13",
+    "reason": "These filesystem paths are used by local translation tooling with paths discovered from the repository. The module is not deployed to Cloudflare and handles no untrusted HTTP requests."
+  }
+]

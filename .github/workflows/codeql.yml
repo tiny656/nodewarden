@@ -1,20 +1,22 @@
 name: "CodeQL Advanced"
 
 on:
-  push:
-    branches:
-      - "**"
+  workflow_call:
+  workflow_dispatch:
 
 permissions:
   contents: read
-  actions: read
-  security-events: write
-  packages: read
 
 jobs:
   analyze:
     name: CodeQL Analyze (${{ matrix.language }})
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+      packages: read
 
     strategy:
       fail-fast: false
@@ -39,6 +41,11 @@ jobs:
           queries: security-extended,security-and-quality
 
       - name: Perform CodeQL Analysis
+        id: analyze
         uses: github/codeql-action/analyze@411bbbe57033eedfc1a82d68c01345aa96c737d7
         with:
           category: "/language:${{ matrix.language }}"
+      - name: Enforce security results
+        env:
+          REPORT_PATH: ${{ steps.analyze.outputs.sarif-output }}
+        run: node scripts/check-security-results.mjs "$REPORT_PATH"
