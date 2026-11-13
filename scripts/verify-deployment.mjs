@@ -6,21 +6,22 @@ function requireCheck(condition, message) {
 }
 
 async function checkExistingResources(settings) {
-  const token = process.env.CLOUDFLARE_API_TOKEN;
+  const token = String(process.env.CLOUDFLARE_API_TOKEN || '').trim();
   requireCheck(token, 'CLOUDFLARE_API_TOKEN is required');
-  const api = async (path) => {
+  const api = async (path, label) => {
     const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${settings.CLOUDFLARE_ACCOUNT_ID}${path}`, {
       headers: { Authorization: `Bearer ${token}` },
       signal: AbortSignal.timeout(30000),
     });
-    requireCheck(response.ok, `Cloudflare resource verification failed (HTTP ${response.status})`);
     const body = await response.json();
-    requireCheck(body.success, 'Cloudflare resource verification failed');
+    const codes = (body.errors || []).map((error) => Number(error.code)).filter(Number.isFinite);
+    requireCheck(response.ok && body.success,
+      `${label} failed (HTTP ${response.status}; Cloudflare error codes: ${codes.join(', ') || 'none'})`);
     return body.result;
   };
   const [worker, domains] = await Promise.all([
-    api('/workers/scripts/nodewarden/settings'),
-    api('/workers/domains'),
+    api('/workers/scripts/nodewarden/settings', 'Worker settings lookup'),
+    api('/workers/domains', 'Custom domain lookup'),
   ]);
   const bindings = worker.bindings || [];
   requireCheck(bindings.some((binding) => binding.name === 'DB' && binding.type === 'd1' &&
