@@ -91,3 +91,13 @@ Authentication bodies are limited to 256 KiB with tighter WebAuthn field bounds.
 Password, API-key, and passkey login attempts share a per-IP budget. Browser idle
 locking uses an absolute deadline and checks it on resume/focus before accepting
 new activity.
+
+## Remote backup listings
+
+WebDAV and S3 listings use a streaming XML parser with DTDs disabled. Each
+response is limited to 2 MiB, 32 nesting levels, 50,000 XML elements, and 16,384
+characters per text field. A listing is limited to 10,000 entries, 10 S3 pages, and a single
+30-second deadline covering headers and body reads across all pages. Repeated
+continuation tokens, malformed XML, and limit violations fail the operation;
+partial results are never used to prune backups. Listing requests reject HTTP
+redirects, so configure the final WebDAV/S3 endpoint URL.

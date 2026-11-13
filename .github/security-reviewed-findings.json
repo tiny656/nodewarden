@@ -44,13 +44,6 @@
   {
     "tool": "Semgrep OSS",
     "rule": "javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp",
-    "path": "src/services/backup-uploader.ts",
-    "expires": "2027-02-13",
-    "reason": "The XML tagName arguments are hardcoded response/href/Contents/Key and other fixed S3/WebDAV field names. Remote XML is input text, never the interpolated regular-expression pattern."
-  },
-  {
-    "tool": "Semgrep OSS",
-    "rule": "javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp",
     "path": "src/services/backup-import.ts",
     "expires": "2027-02-13",
     "reason": "Shadow-table regexes interpolate only BackupTableName members from the internal BACKUP_TABLES whitelist, not table names supplied by a backup or HTTP request."

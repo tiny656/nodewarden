@@ -6,6 +6,14 @@ import {
   WebDavBackupDestination,
   normalizeBackupEndpointUrl,
 } from './backup-config';
+import {
+  listingChild,
+  listingChildren,
+  listingText,
+  readListingXml,
+  REMOTE_LISTING_LIMITS,
+  withListingDeadline,
+} from './backup-listing';
 
 export interface BackupUploadResult {
   provider: BackupDestinationType;
@@ -101,44 +109,9 @@ function sortRemoteItems(items: RemoteBackupItem[]): RemoteBackupItem[] {
   });
 }
 
-function decodeXmlText(value: string): string {
-  return value.replace(/&(amp|lt|gt|quot|#39);/g, (_match, entity) => {
-    switch (entity) {
-      case 'amp':
-        return '&';
-      case 'lt':
-        return '<';
-      case 'gt':
-        return '>';
-      case 'quot':
-        return '"';
-      case '#39':
-        return "'";
-      default:
-        return _match;
-    }
-  });
-}
-
 function parseHttpDate(value: string): string | null {
   const parsed = new Date(value);
   return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : null;
-}
-
-function extractXmlBlocks(xml: string, tagName: string): string[] {
-  const pattern = new RegExp(`<(?:[^:>]+:)?${tagName}\\b[^>]*>([\\s\\S]*?)</(?:[^:>]+:)?${tagName}>`, 'gi');
-  const blocks: string[] = [];
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(xml))) {
-    blocks.push(match[1]);
-  }
-  return blocks;
-}
-
-function extractXmlFirst(xml: string, tagName: string): string | null {
-  const pattern = new RegExp(`<(?:[^:>]+:)?${tagName}\\b[^>]*>([\\s\\S]*?)</(?:[^:>]+:)?${tagName}>`, 'i');
-  const match = xml.match(pattern);
-  return match?.[1] ? decodeXmlText(match[1].trim()) : null;
 }
 
 async function sha256Hex(value: Uint8Array | string): Promise<string> {
@@ -334,7 +307,11 @@ function parseWebDavResponsePath(baseUrl: string, href: string): string {
   return entryPath.startsWith(`${basePath}/`) ? entryPath.slice(basePath.length + 1) : entryPath;
 }
 
-async function listWebDavEntries(config: WebDavBackupDestination, relativePath: string): Promise<RemoteBackupListResult> {
+async function listWebDavEntries(
+  config: WebDavBackupDestination,
+  relativePath: string,
+  signal: AbortSignal
+): Promise<RemoteBackupListResult> {
   const currentPath = normalizeRelativePath(relativePath);
   const targetFullPath = webDavFullPath(config, currentPath);
   const authHeader = toBasicAuthHeader(config.username, config.password);
@@ -346,8 +323,11 @@ async function listWebDavEntries(config: WebDavBackupDestination, relativePath: 
       'Content-Type': 'application/xml; charset=utf-8',
     },
     body: `<?xml version="1.0" encoding="utf-8"?><propfind xmlns="DAV:"><prop><resourcetype/><getcontentlength/><getlastmodified/></prop></propfind>`,
+    signal,
+    redirect: 'error',
   });
   if (response.status === 404) {
+    void response.body?.cancel().catch(() => undefined);
     return {
       provider: 'webdav',
       currentPath,
@@ -356,14 +336,20 @@ async function listWebDavEntries(config: WebDavBackupDestination, relativePath: 
     };
   }
   if (!response.ok) {
+    void response.body?.cancel().catch(() => undefined);
     throw new Error(`WebDAV listing failed: ${response.status}`);
   }
 
-  const xml = await response.text();
+  const root = await readListingXml(response, signal);
+  if (root.name !== 'multistatus' || !['DAV:', ''].includes(root.namespace)) {
+    throw new Error('Remote backup listing is not a WebDAV multistatus response');
+  }
   const rootFullPath = trimSlashes(config.remotePath);
   const items: RemoteBackupItem[] = [];
-  for (const block of extractXmlBlocks(xml, 'response')) {
-    const href = extractXmlFirst(block, 'href');
+  const responses = listingChildren(root, 'response');
+  if (responses.length > REMOTE_LISTING_LIMITS.entries) throw new Error('Remote backup listing has too many entries');
+  for (const block of responses) {
+    const href = listingText(block, 'href');
     if (!href) continue;
     const fullPath = trimSlashes(parseWebDavResponsePath(config.baseUrl, href));
     if (!fullPath) continue;
@@ -378,10 +364,17 @@ async function listWebDavEntries(config: WebDavBackupDestination, relativePath: 
     const directParent = parentPath(relative);
     if ((directParent || '') !== currentPath) continue;
 
-    const resourceTypeBlock = extractXmlFirst(block, 'resourcetype') || '';
-    const isDirectory = /<(?:[^:>]+:)?collection\b/i.test(resourceTypeBlock);
-    const sizeRaw = extractXmlFirst(block, 'getcontentlength');
-    const modifiedAtRaw = extractXmlFirst(block, 'getlastmodified');
+    // Failed propstat blocks must not override successful property values.
+    const properties = listingChildren(block, 'propstat')
+      .filter((entry) => /^HTTP\/\S+ 2\d\d(?:\s|$)/.test(listingText(entry, 'status')))
+      .flatMap((entry) => listingChildren(entry, 'prop'));
+    if (!properties.length) continue;
+    const isDirectory = properties.some((prop) => {
+      const resourceType = listingChild(prop, 'resourcetype');
+      return resourceType && listingChild(resourceType, 'collection');
+    });
+    const sizeRaw = properties.map((prop) => listingText(prop, 'getcontentlength')).find(Boolean) || '';
+    const modifiedAtRaw = properties.map((prop) => listingText(prop, 'getlastmodified')).find(Boolean) || '';
     items.push({
       path: relative,
       name: basename(relative) || relative,
@@ -496,7 +489,8 @@ async function signedS3Request(
   method: 'GET' | 'PUT' | 'DELETE' | 'HEAD',
   url: URL,
   body?: Uint8Array,
-  contentType?: string
+  contentType?: string,
+  signal?: AbortSignal
 ): Promise<Response> {
   const payloadHashHex = await sha256Hex(body || new Uint8Array());
   const amzDate = new Date().toISOString().replace(/[:-]|\.\d{3}/g, '');
@@ -526,6 +520,7 @@ async function signedS3Request(
       ...(method === 'PUT' ? { 'Content-Type': headers['content-type'] } : {}),
     },
     body,
+    ...(signal ? { signal, redirect: 'error' as const } : {}),
   });
 }
 
@@ -552,30 +547,48 @@ async function uploadToS3(config: S3BackupDestination, archive: Uint8Array, file
   };
 }
 
-async function listS3Entries(config: S3BackupDestination, relativePath: string): Promise<RemoteBackupListResult> {
+async function listS3Entries(
+  config: S3BackupDestination,
+  relativePath: string,
+  signal: AbortSignal
+): Promise<RemoteBackupListResult> {
   const currentPath = normalizeRelativePath(relativePath);
   const targetPrefixBase = normalizeS3ObjectKey(config, currentPath);
   const targetPrefix = trimSlashes(targetPrefixBase) ? `${trimSlashes(targetPrefixBase)}/` : '';
   const rootPrefix = trimSlashes(config.rootPath);
   const items: RemoteBackupItem[] = [];
   let continuationToken = '';
+  const seenTokens = new Set<string>();
+  let pageCount = 0;
+  let entryCount = 0;
 
   do {
+    if (++pageCount > REMOTE_LISTING_LIMITS.pages) throw new Error('Remote backup listing has too many pages');
+    if (signal.aborted) throw new Error('Remote backup listing timed out');
     const url = s3BucketBaseUrl(config);
     url.searchParams.set('list-type', '2');
     url.searchParams.set('delimiter', '/');
+    url.searchParams.set('max-keys', '1000');
     if (targetPrefix) url.searchParams.set('prefix', targetPrefix);
     if (continuationToken) url.searchParams.set('continuation-token', continuationToken);
 
-    const response = await signedS3Request(config, 'GET', url);
+    const response = await signedS3Request(config, 'GET', url, undefined, undefined, signal);
     if (!response.ok) {
+      void response.body?.cancel().catch(() => undefined);
       throw new Error(`S3 listing failed: ${response.status}`);
     }
 
-    const xml = await response.text();
+    const root = await readListingXml(response, signal);
+    if (root.name !== 'ListBucketResult' || !['', 'http://s3.amazonaws.com/doc/2006-03-01/'].includes(root.namespace)) {
+      throw new Error('Remote backup listing is not an S3 ListBucketResult');
+    }
+    const prefixes = listingChildren(root, 'CommonPrefixes');
+    const contents = listingChildren(root, 'Contents');
+    entryCount += prefixes.length + contents.length;
+    if (entryCount > REMOTE_LISTING_LIMITS.entries) throw new Error('Remote backup listing has too many entries');
 
-    for (const prefix of extractXmlBlocks(xml, 'CommonPrefixes')) {
-      const fullPrefix = trimSlashes(extractXmlFirst(prefix, 'Prefix') || '');
+    for (const prefix of prefixes) {
+      const fullPrefix = trimSlashes(listingText(prefix, 'Prefix'));
       if (!fullPrefix) continue;
       const relative = rootPrefix
         ? fullPrefix === rootPrefix
@@ -597,8 +610,8 @@ async function listS3Entries(config: S3BackupDestination, relativePath: string):
       });
     }
 
-    for (const content of extractXmlBlocks(xml, 'Contents')) {
-      const fullKey = trimSlashes(extractXmlFirst(content, 'Key') || '');
+    for (const content of contents) {
+      const fullKey = trimSlashes(listingText(content, 'Key'));
       if (!fullKey || (targetPrefix && fullKey === trimSlashes(targetPrefix))) continue;
       const relative = rootPrefix
         ? fullKey.startsWith(`${rootPrefix}/`)
@@ -611,12 +624,26 @@ async function listS3Entries(config: S3BackupDestination, relativePath: string):
         path: normalizedRelative,
         name: basename(normalizedRelative) || normalizedRelative,
         isDirectory: false,
-        size: Number(extractXmlFirst(content, 'Size') || 0) || null,
-        modifiedAt: parseHttpDate(extractXmlFirst(content, 'LastModified') || '') || null,
+        size: Number(listingText(content, 'Size') || 0) || null,
+        modifiedAt: parseHttpDate(listingText(content, 'LastModified')),
       });
     }
 
-    continuationToken = extractXmlFirst(xml, 'NextContinuationToken') || '';
+    continuationToken = listingText(root, 'NextContinuationToken');
+    const isTruncated = listingText(root, 'IsTruncated');
+    if (isTruncated !== 'true' && isTruncated !== 'false') {
+      throw new Error('Remote backup listing has an invalid pagination status');
+    }
+    if (isTruncated === 'true' && !continuationToken) {
+      throw new Error('Remote backup listing is truncated without a continuation token');
+    }
+    if (isTruncated === 'false' && continuationToken) {
+      throw new Error('Remote backup listing has an unexpected continuation token');
+    }
+    if (continuationToken) {
+      if (seenTokens.has(continuationToken)) throw new Error('Remote backup listing repeated a continuation token');
+      seenTokens.add(continuationToken);
+    }
   } while (continuationToken);
 
   const deduped = new Map<string, RemoteBackupItem>();
@@ -714,7 +741,7 @@ function resolveConfiguredDestinationAdapter(
       config: destination.destination as WebDavBackupDestination,
       upload: (config, archive, fileName) => uploadToWebDav(config as WebDavBackupDestination, archive, fileName),
       putFile: (config, relativePath, bytes, options) => putToWebDav(config as WebDavBackupDestination, relativePath, bytes, options),
-      list: (config, relativePath) => listWebDavEntries(config as WebDavBackupDestination, relativePath),
+      list: (config, relativePath) => withListingDeadline((signal) => listWebDavEntries(config as WebDavBackupDestination, relativePath, signal)),
       download: (config, relativePath) => downloadFromWebDav(config as WebDavBackupDestination, relativePath),
       deleteFile: (config, relativePath) => deleteFromWebDav(config as WebDavBackupDestination, relativePath),
       exists: (config, relativePath) => existsInWebDav(config as WebDavBackupDestination, relativePath),
@@ -727,7 +754,7 @@ function resolveConfiguredDestinationAdapter(
       config: destination.destination as S3BackupDestination,
       upload: (config, archive, fileName) => uploadToS3(config as S3BackupDestination, archive, fileName),
       putFile: (config, relativePath, bytes, options) => putToS3(config as S3BackupDestination, relativePath, bytes, options),
-      list: (config, relativePath) => listS3Entries(config as S3BackupDestination, relativePath),
+      list: (config, relativePath) => withListingDeadline((signal) => listS3Entries(config as S3BackupDestination, relativePath, signal)),
       download: (config, relativePath) => downloadFromS3(config as S3BackupDestination, relativePath),
       deleteFile: (config, relativePath) => deleteFromS3(config as S3BackupDestination, relativePath),
       exists: (config, relativePath) => existsInS3(config as S3BackupDestination, relativePath),
