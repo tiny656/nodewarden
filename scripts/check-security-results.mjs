@@ -1,4 +1,4 @@
-import { readFile, readdir } from 'node:fs/promises';
+import { readFile, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -34,8 +34,9 @@ export function blockingResults(report, reviews, today = new Date().toISOString(
   return findings;
 }
 
-async function reportFiles(input) {
-  if (input.endsWith('.sarif')) return [input];
+export async function reportFiles(input) {
+  // Some scanners (notably zizmor-action) return a file without an extension.
+  if ((await stat(input)).isFile()) return [input];
   const files = [];
   for (const entry of await readdir(input, { withFileTypes: true })) {
     const filename = path.join(input, entry.name);
