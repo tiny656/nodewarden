@@ -78,11 +78,21 @@ async function ensureDatabaseInitialized(env: Env): Promise<void> {
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     void ctx;
+    const url = new URL(request.url);
+    // Keep loopback HTTP available for local development; redirect before any
+    // asset, authentication, or database work on public hosts.
+    if (url.protocol === 'http:' && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) {
+      url.protocol = 'https:';
+      return new Response(null, {
+        status: 308,
+        headers: { Location: url.toString(), 'Cache-Control': 'no-store' },
+      });
+    }
     const normalizedRequest = normalizeRequestUrl(request);
     const requestPath = new URL(normalizedRequest.url).pathname;
 
     if (isWebVaultHidden(env) && !isBackendRequestPath(requestPath)) {
-      return webVaultNotFoundResponse(normalizedRequest);
+      return applyCors(normalizedRequest, webVaultNotFoundResponse(normalizedRequest), env);
     }
 
     const assetResponse = await maybeServeAsset(normalizedRequest, env);

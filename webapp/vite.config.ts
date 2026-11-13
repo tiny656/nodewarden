@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import preact from '@preact/preset-vite';
 import tailwindcss from '@tailwindcss/vite';
 import { defineConfig, type Plugin } from 'vite';
@@ -132,15 +133,19 @@ async function trimRuntimeCache(cache, maxEntries) {
 }
 
 async function cacheFirst(request) {
+  // Public static files have identical content regardless of the CORS Origin
+  // header. Precache requests and module requests may use different headers;
+  // honor the URL cache entry for these assets even when the response has Vary.
+  const options = STATIC_PATH_RE.test(new URL(request.url).pathname) ? { ignoreVary: true } : undefined;
   const shellCache = await caches.open(APP_SHELL_CACHE);
-  const cachedShell = await shellCache.match(request);
+  const cachedShell = await shellCache.match(request, options);
   if (cachedShell) return cachedShell;
 
   const runtimeCache = await caches.open(RUNTIME_CACHE);
-  const cachedRuntime = await runtimeCache.match(request);
+  const cachedRuntime = await runtimeCache.match(request, options);
   if (cachedRuntime) return cachedRuntime;
 
-  const legacyRuntime = await matchLegacyRuntimeCache(request);
+  const legacyRuntime = await matchLegacyRuntimeCache(request, options);
   if (legacyRuntime) return legacyRuntime;
 
   const response = await fetch(request);
@@ -150,12 +155,12 @@ async function cacheFirst(request) {
   return response;
 }
 
-async function matchLegacyRuntimeCache(request) {
+async function matchLegacyRuntimeCache(request, options) {
   const keys = await caches.keys();
   for (const key of keys) {
     if (key === RUNTIME_CACHE || !key.startsWith('nodewarden-pwa-') || !key.endsWith('-runtime')) continue;
     const cache = await caches.open(key);
-    const cached = await cache.match(request);
+    const cached = await cache.match(request, options);
     if (cached) return cached;
   }
   return null;
@@ -193,6 +198,10 @@ self.addEventListener('fetch', (event) => {
 function buildCacheVersion(isDemo: boolean, urls: string[]): string {
   const digest = createHash('sha256')
     .update(`${isDemo ? 'demo' : 'app'}\n${urls.join('\n')}`)
+    // Refresh the offline shell when HTML security policy changes even if the
+    // JavaScript and CSS filenames are unchanged.
+    .update(readFileSync(path.resolve(rootDir, 'index.html')))
+    .update(buildServiceWorkerSource.toString())
     .digest('hex')
     .slice(0, 16);
   return `${isDemo ? 'demo' : 'app'}-${digest}`;

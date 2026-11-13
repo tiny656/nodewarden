@@ -4,7 +4,9 @@ node_modules/
 # Wrangler
 .wrangler/
 .dev.vars
+.dev.vars.*
 wrangler.my.toml
+wrangler.ci.toml
 RELEASE_NOTES.md
 tests/selfcheck.ts
 problem.md
@@ -30,6 +32,7 @@ npm-debug.log*
 .vite-tailwind.err
 # Environment
 .env
+.env.*
 .env.local
 .env.*.local
 

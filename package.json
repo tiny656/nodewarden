@@ -21,12 +21,15 @@
     "test:config-compatibility": "tsx --test scripts/config-compatibility.test.ts",
     "test:vault-compatibility": "tsx --tsconfig webapp/tsconfig.json --import ./scripts/offline-workers-loader.mjs --test scripts/vault-compatibility.test.ts",
     "test:web-crypto": "tsx --test scripts/web-crypto-availability.test.ts",
+    "test:web-security": "tsx --import ./scripts/offline-workers-loader.mjs --test scripts/web-security.test.ts",
+    "test:deploy-config": "node --test scripts/deploy-config.test.mjs",
     "test:notifications-security": "tsx --test scripts/notifications-security.test.ts",
     "test:webauthn-mobile": "node --test scripts/webauthn-mobile-connector.test.mjs",
     "test:webauthn-connector": "node --test scripts/webauthn-connector.test.mjs && tsx --test scripts/webauthn-connector-headers.test.ts",
     "test:webauthn-connectors": "node --test scripts/webauthn-mobile-connector.test.mjs scripts/webauthn-connector.test.mjs && tsx --test scripts/webauthn-connector-headers.test.ts",
     "deploy": "wrangler deploy",
     "deploy:kv": "node scripts/ensure-kv.cjs && wrangler deploy -c wrangler.kv.toml",
+    "deploy:my": "wrangler deploy -c wrangler.my.toml",
     "deploy:demo": "npm run build:demo && wrangler pages deploy dist --project-name nw-demo"
   },
   "keywords": [

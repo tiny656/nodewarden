@@ -104,9 +104,13 @@ export function applyCors(
     headers.set(k, v);
   }
   // Security headers applied to every response.
+  const url = new URL(request.url);
+  if (url.protocol === 'https:') {
+    headers.set('Strict-Transport-Security', 'max-age=31536000');
+  }
   headers.set('X-Content-Type-Options', 'nosniff');
   headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
-  const isWebAuthnFrameConnector = new URL(request.url).pathname === '/webauthn-connector.html';
+  const isWebAuthnFrameConnector = url.pathname === '/webauthn-connector.html';
   if (isWebAuthnFrameConnector) {
     // Official desktop and browser clients render this exact endpoint inside a
     // 40px cross-origin iframe. The connector validates its parent before any
@@ -120,7 +124,22 @@ export function applyCors(
     headers.set('X-Frame-Options', 'DENY');
   }
   if (!isWebAuthnFrameConnector && !headers.has('Content-Security-Policy')) {
-    headers.set('Content-Security-Policy', "frame-ancestors 'none'; img-src 'self' data:");
+    const webSocketOrigin = `${url.protocol === 'https:' ? 'wss:' : 'ws:'}//${url.host}`;
+    headers.set('Content-Security-Policy', [
+      "default-src 'self'",
+      "script-src 'self'",
+      "script-src-attr 'none'",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data:",
+      `connect-src 'self' ${webSocketOrigin} https://api.pwnedpasswords.com`,
+      "font-src 'self'",
+      "worker-src 'self'",
+      "object-src 'none'",
+      "base-uri 'none'",
+      "form-action 'self'",
+      "frame-src 'none'",
+      "frame-ancestors 'none'",
+    ].join('; '));
   }
   return new Response(response.body, {
     status: response.status,
