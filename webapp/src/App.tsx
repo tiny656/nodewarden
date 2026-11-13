@@ -68,6 +68,7 @@ import { t } from '@/lib/i18n';
 import { APP_NOTIFY_EVENT, type AppNotifyDetail } from '@/lib/app-notify';
 import { dispatchBackupProgress, type BackupProgressDetail } from '@/lib/backup-restore-progress';
 import { clearOfflineUnlockRecord } from '@/lib/offline-auth';
+import { startIdleLock } from '@/lib/idle-lock';
 import { clearPasswordSecurityCache } from '@/lib/password-security-cache';
 import { decryptSends, decryptVaultCore } from '@/lib/vault-decrypt';
 import { decryptSendsInWorker, decryptVaultCoreInWorker } from '@/lib/vault-worker';
@@ -962,57 +963,16 @@ export default function App() {
   useEffect(() => {
     if (phase !== 'app' || lockTimeoutMinutes === 0) return;
     if (typeof window === 'undefined') return;
-
-    let timerId: number | null = null;
-    let lastActivityAt = 0;
-    const timeoutMs = lockTimeoutMinutes * 60 * 1000;
-
-    const clearTimer = () => {
-      if (timerId !== null) {
-        window.clearTimeout(timerId);
-        timerId = null;
-      }
-    };
-    const runTimeoutAction = () => {
-      if (sessionTimeoutAction === 'logout') {
-        logoutNow();
-        return;
-      }
-      if (sessionRef.current?.symEncKey || sessionRef.current?.symMacKey) {
-        lockCurrentSession();
-      }
-    };
-    const scheduleTimeout = () => {
-      clearTimer();
-      timerId = window.setTimeout(() => {
-        runTimeoutAction();
-      }, timeoutMs);
-    };
-    const markActivity = () => {
-      const now = Date.now();
-      if (now - lastActivityAt < 1000) return;
-      lastActivityAt = now;
-      scheduleTimeout();
-    };
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') markActivity();
-    };
-
-    scheduleTimeout();
-    window.addEventListener('pointerdown', markActivity, { passive: true });
-    window.addEventListener('keydown', markActivity);
-    window.addEventListener('scroll', markActivity, { passive: true });
-    window.addEventListener('touchstart', markActivity, { passive: true });
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-
-    return () => {
-      clearTimer();
-      window.removeEventListener('pointerdown', markActivity);
-      window.removeEventListener('keydown', markActivity);
-      window.removeEventListener('scroll', markActivity);
-      window.removeEventListener('touchstart', markActivity);
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-    };
+    return startIdleLock({
+      timeoutMs: lockTimeoutMinutes * 60 * 1000,
+      onTimeout: () => {
+        if (sessionTimeoutAction === 'logout') {
+          logoutNow();
+        } else if (sessionRef.current?.symEncKey || sessionRef.current?.symMacKey) {
+          lockCurrentSession();
+        }
+      },
+    });
   }, [phase, lockTimeoutMinutes, sessionTimeoutAction]);
 
   function renderPassiveOverlays() {

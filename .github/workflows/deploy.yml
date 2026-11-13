@@ -11,6 +11,23 @@ permissions:
   contents: read
 
 jobs:
+  security:
+    name: Security scans
+    uses: ./.github/workflows/security-extra.yml
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+
+  codeql:
+    name: CodeQL scans
+    uses: ./.github/workflows/codeql.yml
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+      packages: read
+
   check:
     name: Build and verify
     runs-on: ubuntu-latest
@@ -34,6 +51,8 @@ jobs:
       - name: Security and compatibility tests
         run: |
           npm run test:deploy-config
+          npm run test:security-results
+          npm run test:security-regressions
           npm run test:web-security
           npm run test:web-crypto
           npm run test:config-compatibility
@@ -43,12 +62,31 @@ jobs:
       - name: Build Web Vault
         run: npm run build
 
+  release-gate:
+    name: Release gate
+    needs: [check, security, codeql]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    permissions: {}
+    steps:
+      - name: Require every build and security job to succeed
+        env:
+          BUILD_RESULT: ${{ needs.check.result }}
+          SECURITY_RESULT: ${{ needs.security.result }}
+          CODEQL_RESULT: ${{ needs.codeql.result }}
+        run: |
+          test "$BUILD_RESULT" = success
+          test "$SECURITY_RESULT" = success
+          test "$CODEQL_RESULT" = success
+
   deploy:
     name: Deploy existing production Worker
-    needs: check
+    needs: release-gate
     if: github.repository == 'tiny656/nodewarden' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    environment: production
     concurrency:
       group: nodewarden-production
       cancel-in-progress: false

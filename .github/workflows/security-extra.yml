@@ -1,9 +1,8 @@
 name: "Extra Security Scan"
 
 on:
-  push:
-    branches:
-      - "**"
+  workflow_call:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -12,12 +11,13 @@ jobs:
   gitleaks:
     name: Gitleaks Secret Scan
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     permissions:
       contents: read
 
     steps:
-      - name: Checkout full history
+      - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           fetch-depth: 0
@@ -28,7 +28,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_ENABLE_SUMMARY: "true"
-          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "true"
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
           # 如果仓库属于 GitHub Organization，需要在 Settings -> Secrets 里加 GITLEAKS_LICENSE
           # GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
 
@@ -48,9 +48,10 @@ jobs:
       upload-sarif: true
       fail-on-vuln: true
 
-  pnpm-audit:
-    name: pnpm audit
+  npm-audit:
+    name: npm dependency audit
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     permissions:
       contents: read
@@ -64,23 +65,16 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
-          node-version: "22.23.4"
+          node-version-file: .node-version
+          package-manager-cache: false
 
-      - name: Run pnpm audit
-        shell: bash
-        run: |
-          if [ ! -f pnpm-lock.yaml ]; then
-            echo "pnpm-lock.yaml not found, skip pnpm audit."
-            exit 0
-          fi
-
-          corepack enable
-          corepack prepare pnpm@10 --activate
-          pnpm audit --audit-level=high
+      - name: Audit the committed npm lockfile
+        run: npm audit --registry=https://registry.npmjs.org --audit-level=moderate
 
   semgrep:
     name: Semgrep CE Scan
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     permissions:
       contents: read
@@ -96,41 +90,28 @@ jobs:
         shell: bash
         run: |
           docker run --rm \
-            -v "${PWD}:/src" \
+            -v "${PWD}:/src:ro" \
+            -v "${RUNNER_TEMP}:/results" \
             -w /src \
-            semgrep/semgrep:latest \
-            semgrep scan --config p/default --sarif --output semgrep.sarif . || true
+            semgrep/semgrep@sha256:cc1b68266f267878b39739373ea9985b9a78e5d64497dd875c8de100b22695ed \
+            semgrep scan --config p/default --strict --sarif --output /results/semgrep.sarif --metrics off .
 
-          if [ ! -f semgrep.sarif ]; then
-            cat > semgrep.sarif <<'EOF'
-          {
-            "version": "2.1.0",
-            "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
-            "runs": [
-              {
-                "tool": {
-                  "driver": {
-                    "name": "Semgrep",
-                    "informationUri": "https://semgrep.dev",
-                    "rules": []
-                  }
-                },
-                "results": []
-              }
-            ]
-          }
-          EOF
-          fi
+      - name: Enforce reviewed security findings
+        env:
+          REPORT_PATH: ${{ runner.temp }}/semgrep.sarif
+        run: node scripts/check-security-results.mjs "$REPORT_PATH"
 
       - name: Upload Semgrep SARIF
+        if: ${{ !cancelled() }}
         uses: github/codeql-action/upload-sarif@411bbbe57033eedfc1a82d68c01345aa96c737d7
         with:
-          sarif_file: semgrep.sarif
+          sarif_file: ${{ runner.temp }}/semgrep.sarif
           category: semgrep
 
   actionlint:
     name: GitHub Actions Syntax Scan
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     permissions:
       contents: read
@@ -147,11 +128,12 @@ jobs:
           docker run --rm \
             -v "${PWD}:/repo" \
             -w /repo \
-            rhysd/actionlint:latest
+            rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667
 
   zizmor:
     name: GitHub Actions Security Scan
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     permissions:
       contents: read
@@ -165,15 +147,22 @@ jobs:
           persist-credentials: false
 
       - name: Run zizmor
+        id: zizmor
         uses: zizmorcore/zizmor-action@192e21d79ab29983730a13d1382995c2307fbcaa
         with:
           persona: auditor
           min-severity: medium
           min-confidence: medium
 
+      - name: Enforce workflow security findings
+        env:
+          REPORT_PATH: ${{ steps.zizmor.outputs.output-file }}
+        run: node scripts/check-security-results.mjs "$REPORT_PATH"
+
   scorecard:
     name: OpenSSF Scorecard
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     if: github.ref == 'refs/heads/main'
 
     permissions:

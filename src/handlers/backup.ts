@@ -1,4 +1,5 @@
 import type { Env, User } from '../types';
+import { trimCharacter } from '../../shared/trim-character';
 import { errorResponse, jsonResponse } from '../utils/response';
 import {
   type BackupArchiveBundle,
@@ -137,7 +138,7 @@ function getBackupDestinationSummary(destination: BackupDestinationRecord | null
 }
 
 function ensureBackupBlobName(value: string): string {
-  const normalized = String(value || '').trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+  const normalized = trimCharacter(String(value || '').trim().replace(/\\/g, '/'), '/');
   if (!normalized) {
     throw new Error('Backup attachment blob is required');
   }

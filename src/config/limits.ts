@@ -52,6 +52,8 @@
     // Sensitive public/auth request budget per IP per minute.
     // 敏感公开/认证接口每 IP 每分钟请求配额。
     sensitivePublicRequestsPerMinute: 30,
+    // Aggregate budget across login subjects and challenge tokens for one IP.
+    authenticationRequestsPerMinute: 30,
     // Password hint lookup budget per IP per minute.
     // 密码提示查询接口每 IP 每分钟请求配额。
     passwordHintRequestsPerMinute: 1,
@@ -149,6 +151,8 @@
     attachmentDeleteConcurrency: 4,
   },
   request: {
+    // Authentication/WebAuthn requests never need vault-import-sized bodies.
+    maxAuthBodyBytes: 256 * 1024,
     // Hard body size limit for JSON API endpoints (bytes). File upload paths are exempt.
     // JSON 接口请求 body 大小上限（字节），文件上传接口除外。
     maxBodyBytes: 25 * 1024 * 1024,

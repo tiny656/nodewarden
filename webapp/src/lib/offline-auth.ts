@@ -1,4 +1,4 @@
-import { deriveLoginHashLocally, unlockVaultKey } from '@/lib/api/auth';
+import { deriveLoginHashLocally, profileSnapshotForStorage, unlockVaultKey } from '@/lib/api/auth';
 import type { Profile, SessionState, TokenSuccess } from '@/lib/types';
 
 const OFFLINE_UNLOCK_KEY = 'nodewarden.web.offline-unlock.v1';
@@ -18,7 +18,7 @@ function normalizeEmail(email: string | null | undefined): string {
 
 function stripOfflineProfile(profile: Profile): Profile {
   return {
-    ...profile,
+    ...profileSnapshotForStorage(profile)!,
     email: normalizeEmail(profile.email),
     key: '',
     privateKey: null,
@@ -96,7 +96,7 @@ export function saveOfflineUnlockRecord(args: {
   const email = normalizeEmail(args.email || args.profile.email);
   const profileKey = String(args.profileKey || '').trim();
   const kdfIterations = Number(args.kdfIterations || 0);
-  if (!email || !profileKey || !Number.isFinite(kdfIterations) || kdfIterations <= 0) return;
+  if (!email || !profileKey.startsWith('2.') || !Number.isFinite(kdfIterations) || kdfIterations <= 0) return;
   const record: OfflineUnlockRecord = {
     version: 1,
     email,

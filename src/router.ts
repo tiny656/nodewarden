@@ -39,6 +39,12 @@ function isImportBypassRequest(request: Request, path: string, method: string): 
 
 const BODY_LIMIT_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
+function isAuthenticationPath(path: string): boolean {
+  return path.startsWith('/identity/') || path === '/api/accounts/register' ||
+    path.startsWith('/api/two-factor/') || path === '/api/webauthn' || path.startsWith('/api/webauthn/') ||
+    path === '/webauthn' || path.startsWith('/webauthn/');
+}
+
 function isLargeUploadPath(path: string): boolean {
   return (
     /^\/api\/ciphers\/[a-f0-9-]+\/attachment\/[a-f0-9-]+$/i.test(path) ||
@@ -55,15 +61,13 @@ async function enforceRequestBodyLimit(
   if (!BODY_LIMIT_METHODS.has(method) || isLargeUploadPath(path) || !request.body) {
     return request;
   }
+  const maxBytes = isAuthenticationPath(path) ? LIMITS.request.maxAuthBodyBytes : LIMITS.request.maxBodyBytes;
 
   const contentLengthRaw = request.headers.get('Content-Length');
   if (contentLengthRaw) {
     const contentLength = Number(contentLengthRaw);
-    if (Number.isFinite(contentLength) && contentLength > LIMITS.request.maxBodyBytes) {
+    if (Number.isFinite(contentLength) && contentLength > maxBytes) {
       return errorResponse('Request body too large', 413);
-    }
-    if (Number.isFinite(contentLength) && contentLength >= 0) {
-      return request;
     }
   }
 
@@ -75,7 +79,7 @@ async function enforceRequestBodyLimit(
     if (done) break;
     if (!value) continue;
     total += value.byteLength;
-    if (total > LIMITS.request.maxBodyBytes) {
+    if (total > maxBytes) {
       try {
         await reader.cancel();
       } catch {

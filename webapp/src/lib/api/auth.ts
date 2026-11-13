@@ -158,7 +158,7 @@ export function loadProfileSnapshot(email?: string | null): Profile | null {
     const parsed = JSON.parse(raw) as Profile;
     if (!parsed?.email) return null;
     if (email && parsed.email !== email) return null;
-    const snapshot = stripProfileSecrets(parsed);
+    const snapshot = profileSnapshotForStorage(parsed);
     localStorage.setItem(PROFILE_SNAPSHOT_KEY, JSON.stringify(snapshot));
     return snapshot;
   } catch {
@@ -168,11 +168,11 @@ export function loadProfileSnapshot(email?: string | null): Profile | null {
 
 export function saveProfileSnapshot(profile: Profile | null): void {
   if (!profile) return;
-  const nextSnapshot = stripProfileSecrets(profile);
+  const nextSnapshot = profileSnapshotForStorage(profile);
   try {
     const rawExisting = localStorage.getItem(PROFILE_SNAPSHOT_KEY);
     if (rawExisting) {
-      const existing = stripProfileSecrets(JSON.parse(rawExisting) as Profile);
+      const existing = profileSnapshotForStorage(JSON.parse(rawExisting) as Profile);
       if (
         existing
         && existing.email === nextSnapshot?.email
@@ -194,6 +194,20 @@ export function saveProfileSnapshot(profile: Profile | null): void {
 
 export function clearProfileSnapshot(): void {
   localStorage.removeItem(PROFILE_SNAPSHOT_KEY);
+}
+
+export function profileSnapshotForStorage(profile: Profile | null): Profile | null {
+  if (!profile) return null;
+  // Persist only display metadata. Password hints and nested key material must
+  // not be copied from server profiles into browser storage.
+  return {
+    id: String(profile.id || ''),
+    email: String(profile.email || ''),
+    name: String(profile.name || ''),
+    role: profile.role === 'admin' ? 'admin' : 'user',
+    key: '',
+    privateKey: null,
+  };
 }
 
 export function stripProfileSecrets(profile: Profile | null): Profile | null {
