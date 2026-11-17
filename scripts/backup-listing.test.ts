@@ -44,7 +44,7 @@ test('WebDAV lists direct children and ignores failed properties and foreign nam
   ctx.mock.method(globalThis, 'fetch', async (_input: unknown, init: RequestInit) => {
     assert.equal(init.method, 'PROPFIND');
     assert.ok(init.signal);
-    assert.equal(init.redirect, 'error');
+    assert.equal(init.redirect, 'manual');
     return new Response(`<d:multistatus xmlns:d="DAV:" xmlns:other="urn:other">
       <d:response><d:href>/dav/backups/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>
       <d:response><d:href>/dav/backups/attachments/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>
@@ -70,7 +70,8 @@ test('S3 pagination decodes entities and keeps root and direct-child filtering',
   ctx.mock.method(globalThis, 'fetch', async (input: URL, init: RequestInit) => {
     const url = new URL(input);
     assert.equal(url.searchParams.get('max-keys'), '1000');
-    assert.equal(init.redirect, 'error');
+    assert.equal(init.redirect, 'manual');
+    assert.ok(init.signal);
     if (sharedSignal) assert.equal(init.signal, sharedSignal);
     sharedSignal = init.signal!;
     if (++requests === 1) {
@@ -82,6 +83,76 @@ test('S3 pagination decodes entities and keeps root and direct-child filtering',
   const listing = await listRemoteBackupEntries(s3(), '');
   assert.equal(requests, 2);
   assert.deepEqual(listing.items.map((item) => item.path), ['attachments', 'A&B.zip', 'second.zip']);
+});
+
+for (const [provider, destination] of [['WebDAV', webdav], ['S3', s3]] as const) {
+  for (const status of [301, 302, 303, 307, 308]) {
+    test(`${provider} rejects HTTP ${status} without following redirects or reading XML`, async (ctx) => {
+      let requests = 0;
+      let bodyReads = 0;
+      let canceled = false;
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          bodyReads += 1;
+          controller.enqueue(encoder.encode('<<'));
+          controller.close();
+        },
+        cancel() { canceled = true; },
+      }, { highWaterMark: 0 });
+      ctx.mock.method(globalThis, 'fetch', async (input: string | URL, init: RequestInit) => {
+        requests += 1;
+        assert.equal(new URL(input).origin, 'https://storage.example.test');
+        assert.equal(init.method, provider === 'WebDAV' ? 'PROPFIND' : 'GET');
+        assert.equal(init.redirect, 'manual');
+        assert.ok(init.signal);
+        return new Response(body, {
+          status,
+          headers: { Location: 'https://other.example.test/redirected' },
+        });
+      });
+
+      await assert.rejects(() => listRemoteBackupEntries(destination(), ''), {
+        message: `${provider} listing failed: ${status}`,
+      });
+      assert.equal(requests, 1);
+      assert.equal(bodyReads, 0);
+      assert.equal(canceled, true);
+      assert.equal(body.locked, false);
+    });
+  }
+}
+
+test('S3 redirects on a later page abort pruning without deleting any backups', async (ctx) => {
+  const firstPage = s3Page(['old', 'middle', 'new'].map((name) =>
+    `<Contents><Key>backups/${name}.zip</Key></Contents>`
+  ).join('') + '<IsTruncated>true</IsTruncated><NextContinuationToken>next</NextContinuationToken>');
+  let requests = 0;
+  let deletes = 0;
+  ctx.mock.method(globalThis, 'fetch', async (input: URL, init: RequestInit) => {
+    if (init.method === 'DELETE') {
+      deletes += 1;
+      return new Response(null, { status: 204 });
+    }
+    requests += 1;
+    const url = new URL(input);
+    assert.equal(url.origin, 'https://storage.example.test');
+    assert.equal(init.method, 'GET');
+    assert.equal(init.redirect, 'manual');
+    assert.ok(init.signal);
+    if (requests === 1) {
+      assert.equal(url.searchParams.has('continuation-token'), false);
+      return new Response(firstPage);
+    }
+    assert.equal(url.searchParams.get('continuation-token'), 'next');
+    return new Response('This redirect body is not XML', {
+      status: 307,
+      headers: { Location: 'https://other.example.test/redirected' },
+    });
+  });
+
+  await assert.rejects(() => pruneRemoteBackupArchives(s3(), 1), { message: 'S3 listing failed: 307' });
+  assert.equal(requests, 2);
+  assert.equal(deletes, 0);
 });
 
 test('malformed XML, repeated delimiters, DTDs and entity expansion are rejected', async () => {

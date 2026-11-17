@@ -324,7 +324,7 @@ async function listWebDavEntries(
     },
     body: `<?xml version="1.0" encoding="utf-8"?><propfind xmlns="DAV:"><prop><resourcetype/><getcontentlength/><getlastmodified/></prop></propfind>`,
     signal,
-    redirect: 'error',
+    redirect: 'manual',
   });
   if (response.status === 404) {
     void response.body?.cancel().catch(() => undefined);
@@ -520,7 +520,7 @@ async function signedS3Request(
       ...(method === 'PUT' ? { 'Content-Type': headers['content-type'] } : {}),
     },
     body,
-    ...(signal ? { signal, redirect: 'error' as const } : {}),
+    ...(signal ? { signal, redirect: 'manual' as const } : {}),
   });
 }
 
